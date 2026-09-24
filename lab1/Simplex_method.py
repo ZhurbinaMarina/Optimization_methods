@@ -3,20 +3,25 @@ from fractions import Fraction
 
 
 class SimplexSolver:
-    def __init__(self, objective, constraints, b, signs, maximize=True):
+    def __init__(self, objective, constraints, b, signs, maximize=True, free_vars=None):
         self.orig_obj = [Fraction(x) for x in objective]
         self.maximize = maximize
         self.constraints = [[Fraction(x) for x in row] for row in constraints]
         self.b = [Fraction(x) for x in b]
         self.signs = signs
 
-        self.num_orig_vars = len(objective)
+        # Отслеживаем исходное количество переменных и их знаки
+        self.actual_orig_vars_count = len(objective)
+        self.free_vars_flags = free_vars if free_vars else [False] * self.actual_orig_vars_count
+
+        self.num_orig_vars = 0  # Будет пересчитано с учетом свободных переменных
         self.num_constraints = len(b)
 
         self.tableau = None
         self.basis = []
         self.artificial_vars = []
         self.var_names = []
+        self.var_mapping = {}  # Словарь для сборки свободных переменных обратно в ответе
 
     def print_tableau(self, step_name):
         print(f"\n--- {step_name} ---")
@@ -36,13 +41,37 @@ class SimplexSolver:
         print("-" * len(header))
 
     def setup(self):
+        # Если переменная не ограничена в знаке, разбиваем её на две
+        expanded_obj = []
+        expanded_constraints = [[] for _ in range(self.num_constraints)]
+
+        idx = 0
+        for i in range(self.actual_orig_vars_count):
+            expanded_obj.append(self.orig_obj[i])
+            for r in range(self.num_constraints):
+                expanded_constraints[r].append(self.constraints[r][i])
+            self.var_names.append(f"x{i + 1}")
+
+            if self.free_vars_flags[i]:
+                # Добавляем отрицательную часть переменной
+                expanded_obj.append(-self.orig_obj[i])
+                for r in range(self.num_constraints):
+                    expanded_constraints[r].append(-self.constraints[r][i])
+                self.var_names.append(f"x{i + 1}'")
+                self.var_mapping[i] = (idx, idx + 1)
+                idx += 2
+            else:
+                self.var_mapping[i] = (idx, None)
+                idx += 1
+
+        self.num_orig_vars = len(expanded_obj)
+        self.constraints = expanded_constraints
+
         # Приведение к каноническому виду
         if self.maximize:
-            self.c = [-x for x in self.orig_obj]
+            self.c = [-x for x in expanded_obj]
         else:
-            self.c = list(self.orig_obj)
-
-        self.var_names = [f"x{i + 1}" for i in range(self.num_orig_vars)]
+            self.c = list(expanded_obj)
 
         # Добавляем дополнительные и искусственные переменные
         slacks = []
@@ -91,7 +120,7 @@ class SimplexSolver:
             self.tableau[row, col] = Fraction(1)
 
     def pivot(self, pivot_row, pivot_col):
-        # Пересчитываем таблциу
+        # Пересчитываем таблицу
         pivot_val = self.tableau[pivot_row, pivot_col]
         self.tableau[pivot_row, :] /= pivot_val
 
@@ -129,7 +158,8 @@ class SimplexSolver:
                 raise Exception("Решение не ограничено (целевая функция уходит в бесконечность)")
 
             pivot_row = ratios.index(min_ratio)
-            print(f"-> Входит в базис: переменная {self.var_names[pivot_col]}, Выходит: переменная {self.var_names[self.basis[pivot_row]]}")
+            print(
+                f"-> Входит в базис: переменная {self.var_names[pivot_col]}, Выходит: переменная {self.var_names[self.basis[pivot_row]]}")
             print(f"-> Разрешающий элемент: {self.tableau[pivot_row, pivot_col]}")
 
             # Пересчет таблицы
@@ -154,21 +184,42 @@ class SimplexSolver:
 
             self.solve_phase("Фаза 1")
 
-            if self.tableau[-1, -1] < 0:  # С учетом знака Q
+            if self.tableau[-1, -1] < 0:
                 raise Exception("Система ограничений несовместна (пустое множество решений)")
+
+            # Если искусственная переменная осталась в базисе, выгоняем её или удаляем строку
+            rows_to_delete = []
+            for i in range(self.num_constraints):
+                if self.basis[i] in self.artificial_vars:
+                    swapped = False
+                    # Ищем любую неискусственную переменную, чтобы сделать pivot
+                    for j in range(len(self.var_names)):
+                        if j not in self.artificial_vars and self.tableau[i, j] != 0:
+                            print(
+                                f"Вырожденный случай: принудительно выводим {self.var_names[self.basis[i]]}, вводим {self.var_names[j]}")
+                            self.pivot(i, j)
+                            swapped = True
+                            break
+                    if not swapped:
+                        # Если все неискусственные коэффициенты равны 0, значит уравнение было избыточным
+                        print(f"Вырожденный случай: удаляем избыточную (линейно зависимую) строку {i}")
+                        rows_to_delete.append(i)
+
+            # Удаляем избыточные строки с конца (чтобы не сбить индексы)
+            for i in reversed(rows_to_delete):
+                self.tableau = np.delete(self.tableau, i, axis=0)
+                self.basis.pop(i)
+                self.num_constraints -= 1
 
             # Удаляем столбцы искусственных переменных
             cols_to_keep = [i for i in range(len(self.var_names)) if i not in self.artificial_vars] + [-1]
             self.tableau = self.tableau[:, cols_to_keep]
             self.var_names = [name for i, name in enumerate(self.var_names) if i not in self.artificial_vars]
 
-            # Обновляем индексы базиса
+            # Сдвигаем индексы базиса из-за удаленных колонок
             for i in range(len(self.basis)):
-                if self.basis[i] in self.artificial_vars:
-                    pass  # Теоретически сюда не дойдем, если решение есть
-                else:
-                    # Сдвигаем индекс из-за удаленных столбцов
-                    self.basis[i] -= sum(1 for art in self.artificial_vars if art < self.basis[i])
+                shift = sum(1 for art in self.artificial_vars if art < self.basis[i])
+                self.basis[i] -= shift
 
         # Основная задача
         print("\nРешение основной задачи:")
@@ -188,17 +239,25 @@ class SimplexSolver:
 
         # Вывод ответа
         print("\nОтвет:")
-        ans = [Fraction(0)] * self.num_orig_vars
+        expanded_ans = [Fraction(0)] * self.num_orig_vars
         for i in range(self.num_constraints):
             if self.basis[i] < self.num_orig_vars:
-                ans[self.basis[i]] = self.tableau[i, -1]
+                expanded_ans[self.basis[i]] = self.tableau[i, -1]
 
-        ans_str = ", ".join(str(x) for x in ans)
+        # Собираем свободные переменные обратно
+        final_ans = []
+        for i in range(self.actual_orig_vars_count):
+            pos_idx, neg_idx = self.var_mapping[i]
+            val = expanded_ans[pos_idx]
+            if neg_idx is not None:
+                val -= expanded_ans[neg_idx]
+            final_ans.append(val)
+
+        ans_str = ", ".join(str(x) for x in final_ans)
         print(f"Оптимальная точка X* = ({ans_str})")
 
         z = self.tableau[-1, -1] if not self.maximize else -self.tableau[-1, -1]
         print(f"Значение целевой функции Z = {z}")
-
 
 
 # Задача из Варианта №9
@@ -219,6 +278,9 @@ if __name__ == "__main__":
     # Знаки условий
     signs = ['<=', '=', '>=']
 
+    # Флаги свободных переменных (по умолчанию все False). Оставлено для универсальности
+    free_vars = [False, False, False, False]
+
     # Создаем и запускаем решатель
-    solver = SimplexSolver(objective, constraints, b, signs, maximize=True)
+    solver = SimplexSolver(objective, constraints, b, signs, maximize=True, free_vars=free_vars)
     solver.solve()
