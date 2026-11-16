@@ -1,11 +1,10 @@
 class Asset:
 
-    def __init__(self, label, lot, floor, fee, step):
+    def __init__(self, label, lot, floor, fee):
         self.label = label
         self.lot = lot
         self.floor = floor
         self.fee = fee
-        self.step = step
 
 class Phase:
 
@@ -16,9 +15,9 @@ class Phase:
 CASES = ("Благоприятная", "Нейтральная", "Негативная")
 CASE_TAG = ("Б", "Н", "Нг")
 
-BOND1 = Asset("ЦБ1", lot=25.0, floor=30.0, fee=0.04, step=25.0)
-BOND2 = Asset("ЦБ2", lot=200.0, floor=150.0, fee=0.07, step=50.0)
-DEPOSIT = Asset("Депозит", lot=100.0, floor=100.0, fee=0.05, step=25.0)
+BOND1 = Asset("ЦБ1", lot=25.0, floor=30.0, fee=0.04)
+BOND2 = Asset("ЦБ2", lot=200.0, floor=150.0, fee=0.07)
+DEPOSIT = Asset("Депозит", lot=100.0, floor=100.0, fee=0.05)
 
 ASSETS = (BOND1, BOND2, DEPOSIT)
 
@@ -38,4 +37,3 @@ PHASES = (
 )
 
 START = (100.0, 800.0, 400.0, 600.0)
-CASH_STEP = 25.0
